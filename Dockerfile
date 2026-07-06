@@ -11,5 +11,5 @@ COPY . .
 
 EXPOSE 5000
 
-CMD ["sh", "-c", "npx sequelize-cli db:migrate && npx sequelize-cli db:seed:all && npm start"]
+CMD ["sh", "-c", "npx sequelize-cli db:migrate && npm start"]
 
