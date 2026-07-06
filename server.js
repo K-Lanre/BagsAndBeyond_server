@@ -14,6 +14,7 @@ const app = express();
 const { publicApiLimiter } = require('./middleware/rateLimiters');
 
 const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/+$/, '');
+const isRenderOrigin = (origin) => /^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(origin);
 
 const allowedOrigins = new Set(
   [
@@ -28,22 +29,20 @@ const allowedOrigins = new Set(
     .filter(Boolean)
 );
 
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  const normalizedOrigin = normalizeOrigin(origin);
+  return allowedOrigins.has(normalizedOrigin) || isRenderOrigin(normalizedOrigin);
+};
+
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
       return;
     }
 
-    const normalizedOrigin = normalizeOrigin(origin);
-    const isAllowedRenderOrigin = /^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(normalizedOrigin);
-
-    if (allowedOrigins.has(normalizedOrigin) || isAllowedRenderOrigin) {
-      callback(null, true);
-      return;
-    }
-
-    callback(new Error(`Not allowed by CORS: ${normalizedOrigin}`));
+    callback(new Error(`Not allowed by CORS: ${normalizeOrigin(origin)}`));
   },
   credentials: true,
   optionsSuccessStatus: 204
@@ -53,6 +52,29 @@ const corsOptions = {
 app.use(helmet({
   crossOriginResourcePolicy: false,
 }));
+app.use((req, res, next) => {
+  const requestOrigin = normalizeOrigin(req.headers.origin);
+
+  if (isAllowedOrigin(requestOrigin)) {
+    if (requestOrigin) {
+      res.header('Access-Control-Allow-Origin', requestOrigin);
+      res.header('Vary', 'Origin');
+    }
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.header(
+      'Access-Control-Allow-Headers',
+      req.headers['access-control-request-headers'] || 'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+    );
+  }
+
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(204);
+    return;
+  }
+
+  next();
+});
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(morgan('dev'));
