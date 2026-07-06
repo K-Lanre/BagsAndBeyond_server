@@ -24,9 +24,13 @@ const validateEnv = () => {
   });
 
   requireStrongValue('CLIENT_URL', process.env.CLIENT_URL);
-  requireStrongValue('DB_NAME', process.env.DB_NAME);
-  requireStrongValue('DB_USER', process.env.DB_USER);
-  requireStrongValue('DB_PASSWORD', process.env.DB_PASSWORD, { minLength: 8 });
+  if (process.env.DATABASE_URL) {
+    requireStrongValue('DATABASE_URL', process.env.DATABASE_URL, { minLength: 20 });
+  } else {
+    requireStrongValue('DB_NAME', process.env.DB_NAME);
+    requireStrongValue('DB_USER', process.env.DB_USER);
+    requireStrongValue('DB_PASSWORD', process.env.DB_PASSWORD, { minLength: 8 });
+  }
 
   if (process.env.PAYSTACK_SECRET_KEY) {
     requireStrongValue('PAYSTACK_SECRET_KEY', process.env.PAYSTACK_SECRET_KEY, { minLength: 12 });
