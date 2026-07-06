@@ -2,6 +2,31 @@ const { Order, Product, AuditLog, AdminUser, OrderItem } = require('../models');
 const { Op, fn, col, literal } = require('sequelize');
 const { sequelize } = require('../models');
 
+const padNumber = (value) => String(value).padStart(2, '0');
+const getModelValue = (model, key) => model?.get?.(key) ?? model?.[key] ?? model?.dataValues?.[key] ?? null;
+
+const formatChartBucket = (date, period) => {
+  const year = date.getFullYear();
+  const month = padNumber(date.getMonth() + 1);
+  const day = padNumber(date.getDate());
+
+  if (period === 'monthly') {
+    return `${year}-${month}`;
+  }
+
+  if (period === 'weekly') {
+    const weekDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const weekDay = weekDate.getUTCDay() || 7;
+    weekDate.setUTCDate(weekDate.getUTCDate() + 4 - weekDay);
+    const weekYear = weekDate.getUTCFullYear();
+    const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+    const weekNumber = Math.ceil((((weekDate - yearStart) / 86400000) + 1) / 7);
+    return `${weekYear}-W${padNumber(weekNumber)}`;
+  }
+
+  return `${year}-${month}-${day}`;
+};
+
 // GET /api/admin/dashboard/stats
 exports.getStats = async (req, res) => {
   try {
@@ -61,35 +86,54 @@ exports.getStats = async (req, res) => {
 exports.getSalesChart = async (req, res) => {
   try {
     const { period = 'daily' } = req.query;
-    let groupBy, dateFormat, daysBack;
+    let daysBack;
 
     if (period === 'monthly') {
-      groupBy = fn('DATE_FORMAT', col('created_at'), '%Y-%m');
-      dateFormat = '%Y-%m';
       daysBack = 365;
     } else if (period === 'weekly') {
-      groupBy = fn('DATE_FORMAT', col('created_at'), '%Y-%u');
-      dateFormat = '%Y-%u';
       daysBack = 90;
     } else {
-      groupBy = fn('DATE', col('created_at'));
-      dateFormat = '%Y-%m-%d';
       daysBack = 30;
     }
 
     const from = new Date();
     from.setDate(from.getDate() - daysBack);
 
-    const data = await Order.findAll({
+    const orders = await Order.findAll({
       where: { payment_status: 'paid', created_at: { [Op.gte]: from } },
-      attributes: [
-        [fn('DATE_FORMAT', col('created_at'), dateFormat), 'date'],
-        [fn('SUM', col('total')), 'revenue'],
-        [fn('COUNT', col('id')), 'orders']
-      ],
-      group: [fn('DATE_FORMAT', col('created_at'), dateFormat)],
-      order: [[fn('DATE_FORMAT', col('created_at'), dateFormat), 'ASC']]
+      attributes: ['created_at', 'total'],
+      order: [['created_at', 'ASC']]
     });
+
+    const grouped = orders.reduce((acc, order) => {
+      const createdAt = getModelValue(order, 'created_at') || getModelValue(order, 'createdAt');
+      const total = Number(getModelValue(order, 'total') || 0);
+      const orderDate = new Date(createdAt);
+
+      if (Number.isNaN(orderDate.getTime())) {
+        return acc;
+      }
+
+      const bucket = formatChartBucket(orderDate, period);
+
+      if (!acc[bucket]) {
+        acc[bucket] = {
+          date: bucket,
+          revenue: 0,
+          orders: 0
+        };
+      }
+
+      acc[bucket].revenue += total;
+      acc[bucket].orders += 1;
+
+      return acc;
+    }, {});
+
+    const data = Object.values(grouped).map((item) => ({
+      ...item,
+      revenue: Number(item.revenue.toFixed(2))
+    }));
 
     res.json(data);
   } catch (error) {
@@ -174,7 +218,7 @@ exports.getAuditLogs = async (req, res) => {
   try {
     const { page = 1, limit = 20, action, admin_user_id } = req.query;
     const where = {};
-    if (action) where.action = { [Op.like]: `%${action}%` };
+    if (action) where.action = { [Op.iLike]: `%${action}%` };
     if (admin_user_id) where.admin_user_id = admin_user_id;
 
     const offset = (page - 1) * limit;

@@ -145,11 +145,10 @@ exports.trackOrders = async (req, res) => {
         'payment_status',
         'total',
         'created_at',
-        [
-          Sequelize.literal('(SELECT COUNT(*) FROM order_items WHERE order_items.order_id = `Order`.`id`)'),
-          'items_count'
-        ]
+        [Sequelize.fn('COUNT', Sequelize.col('items.id')), 'items_count']
       ],
+      include: [{ model: OrderItem, as: 'items', attributes: [] }],
+      group: ['Order.id'],
       order: [['created_at', 'DESC']]
     });
 
@@ -223,9 +222,9 @@ exports.adminGetOrders = async (req, res) => {
     if (payment_status) where.payment_status = payment_status;
     if (search) {
       where[Op.or] = [
-        { customer_email: { [Op.like]: `%${search}%` } },
-        { customer_name: { [Op.like]: `%${search}%` } },
-        { order_number: { [Op.like]: `%${search}%` } }
+        { customer_email: { [Op.iLike]: `%${search}%` } },
+        { customer_name: { [Op.iLike]: `%${search}%` } },
+        { order_number: { [Op.iLike]: `%${search}%` } }
       ];
     }
 

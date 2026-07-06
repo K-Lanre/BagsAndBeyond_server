@@ -5,6 +5,10 @@ const hasPaystackSecret = () => {
   return Boolean(process.env.PAYSTACK_SECRET_KEY && process.env.PAYSTACK_SECRET_KEY.startsWith('sk_'));
 };
 
+const shouldUseMockPayments = () => {
+  return process.env.PAYMENT_PROVIDER_MODE === 'mock' || !hasPaystackSecret();
+};
+
 const fetchWithTimeout = async (url, options = {}, timeoutMs = 30000) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -50,21 +54,27 @@ const buildCallbackUrl = (providedUrl, order, reference) => {
 const markPaymentSuccessful = async (payment, metadata = {}) => {
   return sequelize.transaction(async (transaction) => {
     const order = await Order.findByPk(payment.order_id, {
-      include: [{ model: OrderItem, as: 'items' }],
       transaction,
       lock: transaction.LOCK.UPDATE
     });
 
     if (!order) return null;
 
+    const items = await OrderItem.findAll({
+      where: { order_id: order.id },
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+
     if (payment.status === 'success' || order.payment_status === 'paid') {
       if (payment.status !== 'success') {
         await payment.update({ status: 'success', metadata }, { transaction });
       }
+      order.setDataValue('items', items);
       return order;
     }
 
-    for (const item of order.items) {
+    for (const item of items) {
       const product = await Product.findByPk(item.product_id, {
         transaction,
         lock: transaction.LOCK.UPDATE
@@ -110,6 +120,7 @@ const markPaymentSuccessful = async (payment, metadata = {}) => {
 
     await payment.update({ status: 'success', metadata }, { transaction });
     await order.update({ payment_status: 'paid', status: 'processing' }, { transaction });
+    order.setDataValue('items', items);
 
     return order;
   });
@@ -139,10 +150,11 @@ exports.initializePaystack = async (req, res) => {
       return res.status(400).json({ message: 'This order has already been paid' });
     }
 
-    const reference = `${hasPaystackSecret() ? 'PAY' : 'MOCK'}-${Date.now()}-${order.id}`;
+    const useMockPayment = shouldUseMockPayments();
+    const reference = `${useMockPayment ? 'MOCK' : 'PAY'}-${Date.now()}-${order.id}`;
     const amount = parseFloat(order.total);
 
-    await Payment.create({
+    const payment = await Payment.create({
       order_id: order.id,
       provider: 'paystack',
       reference,
@@ -154,7 +166,7 @@ exports.initializePaystack = async (req, res) => {
 
     const callbackUrl = buildCallbackUrl(callback_url, order, reference);
 
-    if (!hasPaystackSecret()) {
+    if (useMockPayment) {
       return res.json({
         authorization_url: callbackUrl,
         access_code: 'mock_access_code',
@@ -188,7 +200,7 @@ exports.initializePaystack = async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       authorization_url: paystackData.data.authorization_url,
       access_code: paystackData.data.access_code,
       reference
@@ -225,7 +237,10 @@ exports.verifyPayment = async (req, res) => {
     let status = 'failed';
     let metadata = {};
 
-    if (hasPaystackSecret()) {
+    if (reference.startsWith('MOCK-')) {
+      status = 'success';
+      metadata = { provider: 'mock', reference };
+    } else if (hasPaystackSecret()) {
       const response = await fetchWithTimeout(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
         headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
       });
@@ -237,9 +252,6 @@ exports.verifyPayment = async (req, res) => {
 
       status = data.data.status;
       metadata = data.data;
-    } else if (reference.startsWith('MOCK-')) {
-      status = 'success';
-      metadata = { provider: 'mock', reference };
     }
 
     let order = null;

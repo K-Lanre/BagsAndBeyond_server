@@ -6,7 +6,8 @@ module.exports = {
     password: process.env.DB_PASSWORD || null,
     database: process.env.DB_NAME || 'bagsandbeyond',
     host: process.env.DB_HOST || '127.0.0.1',
-    dialect: 'mysql',
+    port: Number(process.env.DB_PORT) || 5432,
+    dialect: 'postgres',
     logging: false
   },
   test: {
@@ -14,7 +15,8 @@ module.exports = {
     password: process.env.DB_PASSWORD || null,
     database: process.env.DB_NAME_TEST || 'bagsandbeyond_test',
     host: process.env.DB_HOST || '127.0.0.1',
-    dialect: 'mysql',
+    port: Number(process.env.DB_PORT_TEST || process.env.DB_PORT) || 5432,
+    dialect: 'postgres',
     logging: false
   },
   production: {
@@ -22,7 +24,8 @@ module.exports = {
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     host: process.env.DB_HOST,
-    dialect: 'mysql',
+    port: Number(process.env.DB_PORT) || 5432,
+    dialect: 'postgres',
     logging: false
   }
 };

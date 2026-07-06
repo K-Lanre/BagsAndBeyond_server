@@ -1,4 +1,4 @@
-const { Product } = require('../models');
+const { Product, OrderItem } = require('../models');
 const { Op } = require('sequelize');
 const { generateUniqueSlug } = require('../utils/slugify');
 const upload = require('../middleware/upload');
@@ -34,15 +34,21 @@ const normalizeDimensions = (dimensions) => {
   };
 };
 
+const normalizeNumberField = (value, fallback = null) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? fallback : parsed;
+};
+
 const buildProductPayload = (body) => ({
   name: body.name,
   description: body.description,
-  price: body.price,
-  stock_quantity: body.stock_quantity,
+  price: normalizeNumberField(body.price),
+  stock_quantity: normalizeNumberField(body.stock_quantity, 0),
   category: body.category,
   subcategory: body.subcategory,
   status: body.status,
-  weight: body.weight,
+  weight: normalizeNumberField(body.weight),
   dimensions: normalizeDimensions(body.dimensions)
 });
 
@@ -57,12 +63,12 @@ exports.getProducts = async (req, res) => {
     if (subcategory) where.subcategory = subcategory;
     if (search) {
       where[Op.or] = [
-        { name: { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
-        { sku: { [Op.like]: `%${search}%` } },
-        { slug: { [Op.like]: `%${search}%` } },
-        { category: { [Op.like]: `%${search}%` } },
-        { subcategory: { [Op.like]: `%${search}%` } }
+        { name: { [Op.iLike]: `%${search}%` } },
+        { description: { [Op.iLike]: `%${search}%` } },
+        { sku: { [Op.iLike]: `%${search}%` } },
+        { slug: { [Op.iLike]: `%${search}%` } },
+        { category: { [Op.iLike]: `%${search}%` } },
+        { subcategory: { [Op.iLike]: `%${search}%` } }
       ];
     }
     if (min_price || max_price) {
@@ -104,12 +110,12 @@ exports.adminGetProducts = async (req, res) => {
     if (status) where.status = status;
     if (search) {
       where[Op.or] = [
-        { name: { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
-        { sku: { [Op.like]: `%${search}%` } },
-        { slug: { [Op.like]: `%${search}%` } },
-        { category: { [Op.like]: `%${search}%` } },
-        { subcategory: { [Op.like]: `%${search}%` } }
+        { name: { [Op.iLike]: `%${search}%` } },
+        { description: { [Op.iLike]: `%${search}%` } },
+        { sku: { [Op.iLike]: `%${search}%` } },
+        { slug: { [Op.iLike]: `%${search}%` } },
+        { category: { [Op.iLike]: `%${search}%` } },
+        { subcategory: { [Op.iLike]: `%${search}%` } }
       ];
     }
 
@@ -202,29 +208,85 @@ exports.adminUpdateProduct = async (req, res) => {
   }
 };
 
+// PATCH /api/admin/products/:slug/status
+exports.adminUpdateProductStatus = async (req, res) => {
+  try {
+    const product = await Product.findOne({ where: { slug: req.params.slug } });
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    const requestedStatus = String(req.body.status || '').trim().toLowerCase();
+    if (!['active', 'inactive'].includes(requestedStatus)) {
+      return res.status(400).json({ message: 'Status must be either active or inactive' });
+    }
+
+    const oldValues = product.toJSON();
+    const nextStatus = requestedStatus === 'inactive'
+      ? 'inactive'
+      : product.stock_quantity === 0
+        ? 'out_of_stock'
+        : product.stock_quantity < 10
+          ? 'low_stock'
+          : 'active';
+
+    await product.update({ status: nextStatus });
+
+    if (req.admin) {
+      const { AuditLog } = require('../models');
+      await AuditLog.create({
+        admin_user_id: req.admin.id,
+        action: nextStatus === 'inactive' ? 'DEACTIVATE_PRODUCT' : 'REACTIVATE_PRODUCT',
+        entity_type: 'product',
+        entity_id: product.id,
+        old_values: oldValues,
+        new_values: product.toJSON(),
+        ip_address: req.ip
+      });
+    }
+
+    res.json({
+      message: nextStatus === 'inactive' ? 'Product deactivated successfully' : 'Product reactivated successfully',
+      product
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating product status', error: error.message });
+  }
+};
+
 // DELETE /api/admin/products/:slug  (soft delete)
 exports.adminDeleteProduct = async (req, res) => {
   try {
     const product = await Product.findOne({ where: { slug: req.params.slug } });
     if (!product) return res.status(404).json({ message: 'Product not found' });
 
-    await product.update({ status: 'inactive' });
+    if (product.status !== 'inactive') {
+      return res.status(400).json({ message: 'Deactivate this product before clearing it permanently' });
+    }
+
+    const existingOrderItems = await OrderItem.count({ where: { product_id: product.id } });
+    if (existingOrderItems > 0) {
+      return res.status(409).json({
+        message: 'This product cannot be permanently deleted because it is linked to existing orders'
+      });
+    }
+
+    const oldValues = product.toJSON();
+    await product.destroy();
 
     // Audit log
     if (req.admin) {
       const { AuditLog } = require('../models');
       await AuditLog.create({
         admin_user_id: req.admin.id,
-        action: 'DELETE_PRODUCT',
+        action: 'CLEAR_PRODUCT',
         entity_type: 'product',
         entity_id: product.id,
-        old_values: { status: 'active' },
-        new_values: { status: 'inactive' },
+        old_values: oldValues,
+        new_values: null,
         ip_address: req.ip
       });
     }
 
-    res.json({ message: 'Product deactivated successfully' });
+    res.json({ message: 'Product permanently deleted' });
   } catch (error) {
     res.status(500).json({ message: 'Error deleting product', error: error.message });
   }

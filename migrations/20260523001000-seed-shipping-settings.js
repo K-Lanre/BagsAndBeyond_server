@@ -2,11 +2,13 @@
 
 module.exports = {
   async up(queryInterface) {
-    const [rows] = await queryInterface.sequelize.query(
-      "SELECT id FROM system_settings WHERE `key` = 'shipping' LIMIT 1"
+    const existingSettingId = await queryInterface.rawSelect(
+      'system_settings',
+      { where: { key: 'shipping' } },
+      ['id']
     );
 
-    if (rows.length === 0) {
+    if (!existingSettingId) {
       await queryInterface.bulkInsert('system_settings', [{
         key: 'shipping',
         value: JSON.stringify({

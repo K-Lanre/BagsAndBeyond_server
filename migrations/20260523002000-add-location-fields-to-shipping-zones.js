@@ -41,16 +41,18 @@ module.exports = {
       END
     `);
 
-    const value = JSON.stringify({
-      freeShippingThreshold: 50000,
-      storeCountry: 'Nigeria',
-      domesticDefaultShippingFee: 1500,
-      internationalDefaultShippingFee: 25000
-    });
-
-    await queryInterface.sequelize.query(
-      `UPDATE system_settings SET value = :value, updated_at = :updatedAt WHERE \`key\` = 'shipping'`,
-      { replacements: { value, updatedAt: new Date() } }
+    await queryInterface.bulkUpdate(
+      'system_settings',
+      {
+        value: JSON.stringify({
+          freeShippingThreshold: 50000,
+          storeCountry: 'Nigeria',
+          domesticDefaultShippingFee: 1500,
+          internationalDefaultShippingFee: 25000
+        }),
+        updated_at: new Date()
+      },
+      { key: 'shipping' }
     );
   },
 

@@ -33,6 +33,7 @@ router.put('/notifications/clear', adminController.clearNotifications);
 // ─── Products ────────────────────────────────────────────────────────────────
 router.get('/products', validate(validators.adminProductQuery), productController.adminGetProducts);
 router.post('/products', upload.array('images', 10), validate(validators.createProduct), productController.adminCreateProduct);
+router.patch('/products/:slug/status', productController.adminUpdateProductStatus);
 router.put('/products/:slug', upload.array('images', 10), validate(validators.updateProduct), productController.adminUpdateProduct);
 router.patch('/products/:slug', upload.array('images', 10), validate(validators.updateProduct), productController.adminUpdateProduct);
 router.delete('/products/:slug', isSuperAdmin, productController.adminDeleteProduct);
