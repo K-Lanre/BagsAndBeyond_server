@@ -23,7 +23,10 @@ const validateEnv = () => {
     forbidden: [DEFAULT_JWT_SECRET]
   });
 
-  requireStrongValue('CLIENT_URL', process.env.CLIENT_URL);
+  // CLIENT_URL is recommended but not fatal — CORS also allows *.onrender.com via regex.
+  if (!process.env.CLIENT_URL) {
+    console.warn('[WARN] CLIENT_URL is not set. Falling back to isRenderOrigin() regex for CORS.');
+  }
   if (process.env.DATABASE_URL) {
     requireStrongValue('DATABASE_URL', process.env.DATABASE_URL, { minLength: 20 });
   } else {
