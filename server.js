@@ -13,26 +13,48 @@ validateEnv();
 const app = express();
 const { publicApiLimiter } = require('./middleware/rateLimiters');
 
-const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/+$/, '');
+
+const allowedOrigins = new Set(
+  [
+    process.env.CLIENT_URL,
+    process.env.CORS_ORIGINS,
+    'http://localhost:5173',
+    'http://127.0.0.1:5173'
+  ]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(','))
+    .map(normalizeOrigin)
+    .filter(Boolean)
+);
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    const normalizedOrigin = normalizeOrigin(origin);
+    const isAllowedRenderOrigin = /^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(normalizedOrigin);
+
+    if (allowedOrigins.has(normalizedOrigin) || isAllowedRenderOrigin) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error(`Not allowed by CORS: ${normalizedOrigin}`));
+  },
+  credentials: true,
+  optionsSuccessStatus: 204
+};
 
 // Middleware
 app.use(helmet({
   crossOriginResourcePolicy: false,
 }));
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-      return;
-    }
-
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true
-}));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(morgan('dev'));
 
 // Static files (for image uploads)
