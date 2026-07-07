@@ -13,7 +13,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # Uploads directory (dynamic assets)
-uploads/
+# uploads/
 
 # OS/Editor configs
 .DS_Store
